@@ -52,32 +52,39 @@ jobs:
 
               console.log(`🔍 Fetching forks...`);
 
-              let forks = await github.paginate(
+              const forks = [];
+              const now = Date.now();
+              let scannedForks = 0;
+
+              // Fetch forks page-by-page and stop once we have enough active forks
+              outer:
+              for await (const { data: page } of github.paginate.iterator(
                 github.rest.repos.listForks,
                 {
                   owner: UPSTREAM_OWNER,
                   repo: UPSTREAM_REPO,
                   per_page: 100
                 }
-              );
+              )) {
+                for (const fork of page) {
+                  scannedForks++;
 
-              console.log(`📦 Total forks found: ${forks.length}`);
+                  const updatedRecently =
+                    new Date(fork.updated_at).getTime() >
+                    (now - ACTIVE_DAYS * 24 * 60 * 60 * 1000);
 
-              //Filter active forks
-              const now = Date.now();
-              forks = forks.filter(fork => {
-                const updatedRecently =
-                  new Date(fork.updated_at).getTime() >
-                  (now - ACTIVE_DAYS * 24 * 60 * 60 * 1000);
+                  if (!fork.archived && updatedRecently) {
+                    forks.push(fork);
 
-                return !fork.archived && updatedRecently;
-              });
+                    if (forks.length >= MAX_FORKS) {
+                      break outer;
+                    }
+                  }
+                }
+              }
 
-              console.log(`⚡ Active forks (last ${ACTIVE_DAYS} days): ${forks.length}`);
-
-              //Limit number of forks
-              forks = forks.slice(0, MAX_FORKS);
-
+              console.log(`📦 Forks scanned: ${scannedForks}`);
+              console.log(`⚡ Active forks collected (last ${ACTIVE_DAYS} days): ${forks.length}`);
               console.log(`🚀 Processing first ${forks.length} forks`);
 
               for (const fork of forks) {
@@ -117,13 +124,15 @@ jobs:
                   await delay(1000);
 
                 } catch (error) {
-                  if (error.message.includes('Resource not accessible')) {
+                  const errorMessage = String(error?.message ?? error);
+
+                  if (errorMessage.includes('Resource not accessible')) {
                     permissionErrors++;
                     console.log(`🔒 Permission denied`);
                   } else {
-                    console.log(`❌ Error: ${error.message}`);
+                    console.log(`❌ Error: ${errorMessage}`);
+                    errorCount++;
                   }
-                  errorCount++;
                 }
               }
 
