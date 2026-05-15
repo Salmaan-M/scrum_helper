@@ -20,8 +20,8 @@ jobs:
             const UPSTREAM_OWNER = 'fossasia';
             const UPSTREAM_REPO = 'scrum_helper';
 
-            const MAX_FORKS = 100; // limit processing
-            const ACTIVE_DAYS = 30; // only forks updated in last 30 days
+            const MAX_FORKS = 100;
+            const ACTIVE_DAYS = 30;
 
             let syncedCount = 0;
             let skippedCount = 0;
@@ -36,6 +36,7 @@ jobs:
                   return await fn();
                 } catch (err) {
                   if (i === retries) throw err;
+
                   console.log(`Retrying... (${i + 1})`);
                   await delay(1000);
                 }
@@ -84,7 +85,9 @@ jobs:
               }
 
               console.log(`📦 Forks scanned: ${scannedForks}`);
-              console.log(`⚡ Active forks collected (last ${ACTIVE_DAYS} days): ${forks.length}`);
+              console.log(
+                `⚡ Active forks collected (last ${ACTIVE_DAYS} days): ${forks.length}`
+              );
               console.log(`🚀 Processing first ${forks.length} forks`);
 
               for (const fork of forks) {
@@ -95,31 +98,35 @@ jobs:
                     github.rest.repos.compareCommitsWithBasehead({
                       owner: fork.owner.login,
                       repo: fork.name,
-                      basehead: `${fork.default_branch}...${UPSTREAM_OWNER}:${upstreamBranch}`
+                      basehead: `${UPSTREAM_OWNER}:${upstreamBranch}...${fork.default_branch}`
                     })
                   );
 
-                  if (comparison.data.behind_by === 0) {
+                  const status = comparison.data.status;
+
+                  if (status === 'identical') {
                     console.log(`✅ Up to date`);
                     continue;
                   }
 
-                  if (comparison.data.ahead_by > 0) {
-                    console.log(`⏭ Skipped (ahead by ${comparison.data.ahead_by} commits)`);
+                  if (status === 'ahead' || status === 'diverged') {
+                    console.log(`⏭ Skipped (${status})`);
                     skippedCount++;
                     continue;
                   }
 
-                  await retry(() =>
-                    github.rest.repos.mergeUpstream({
-                      owner: fork.owner.login,
-                      repo: fork.name,
-                      branch: fork.default_branch
-                    })
-                  );
+                  if (status === 'behind') {
+                    await retry(() =>
+                      github.rest.repos.mergeUpstream({
+                        owner: fork.owner.login,
+                        repo: fork.name,
+                        branch: fork.default_branch
+                      })
+                    );
 
-                  console.log(`🔄 Synced successfully`);
-                  syncedCount++;
+                    console.log(`🔄 Synced successfully`);
+                    syncedCount++;
+                  }
 
                   await delay(1000);
 
@@ -138,11 +145,14 @@ jobs:
 
               console.log(`\n📊 ===== Summary =====`);
               console.log(`✅ Synced: ${syncedCount}`);
-              console.log(`⏭ Skipped (ahead): ${skippedCount}`);
+              console.log(`⏭ Skipped: ${skippedCount}`);
               console.log(`🔒 Permission issues: ${permissionErrors}`);
               console.log(`❌ Errors: ${errorCount}`);
 
             } catch (error) {
-              console.error(`🚨 Workflow failed: ${error.message}`);
+              console.error(
+                `🚨 Workflow failed: ${String(error?.message || error)}`
+              );
+
               throw error;
             }
